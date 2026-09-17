@@ -1,14 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
 
 const ENV_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_URL = (ENV_URL && !ENV_URL.includes('mjwganpjawthnowemabt') && !ENV_URL.includes('lupbvrgmkovpohjnbddf'))
+const SUPABASE_URL = (ENV_URL && !ENV_URL.includes('mhzvxnbnaytirrgiwsnv') && !ENV_URL.includes('lupbvrgmkovpohjnbddf'))
   ? ENV_URL
-  : 'https://mhzvxnbnaytirrgiwsnv.supabase.co';
+  : 'https://mjwganpjawthnowemabt.supabase.co';
 
 const ENV_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const SUPABASE_ANON_KEY = (ENV_KEY && !ENV_KEY.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1qd2dhbnBqYXd0aG5vd2VtYWJ0'))
+const SUPABASE_ANON_KEY = (ENV_KEY && !ENV_KEY.includes('sb_publishable_gn93SdRFAAvpnH6faute9g_n8DiwZ_j') && !ENV_KEY.includes('sb_publishable_Ybu1D-FMVkpgJ-Z4y6KoIQ_A5Eo-M24'))
   ? ENV_KEY
-  : 'sb_publishable_gn93SdRFAAvpnH6faute9g_n8DiwZ_j';
+  : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1qd2dhbnBqYXd0aG5vd2VtYWJ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzMDczMTUsImV4cCI6MjEwMTg4MzMxNX0.OwKeHoH2DH-jS7-_XRf6Vkx4bNZPKgbL9WOr5oSd27c';
 
 const UNIPILE_API_KEY = 'vpftWHjq.lC9ACICdkDlLNupo90avQybHg2UjAtAkMssKHxsEw9o=';
 const UNIPILE_BASE_URL = 'https://api63.unipile.com:19339/api/v1';
@@ -174,15 +174,50 @@ export const getActiveOrganizationId = () => {
 let activeAccountId = null;
 
 export const directGetProfiles = async () => {
+  const orgId = getActiveOrganizationId();
+  const userAcc = getActiveUserAccount();
+  const userEmail = userAcc?.email ? userAcc.email.toLowerCase() : null;
+  const isSuper = isSuperAdminUser();
+
   try {
     const { data, error } = await supabaseDirect.from('profiles').select('*');
     if (!error && data && data.length > 0) {
-      // In this dedicated database, all real LinkedIn profiles belong to this tool
+      // Only real LinkedIn profiles with unipile_account_id
       let realProfiles = data.filter(p => {
         if (p.profile_key?.startsWith('user_')) return false;
         if (!p.unipile_account_id || p.unipile_account_id.includes('@')) return false;
-        return true;
+
+        // Super admins have global access to all connected profiles
+        if (isSuper) return true;
+
+        const pOrgId = p.organization_id || p.settings?.organization_id || p.settings?.orgId;
+        const pEmail = (p.user_email || p.settings?.user_email || p.settings?.email || '').toLowerCase();
+
+        // If profile has no explicit org or email (global/unassigned in workspace), make it available to the workspace
+        if (!pOrgId && !pEmail) return true;
+
+        // Match user's orgId or userEmail
+        if (orgId && pOrgId && pOrgId === orgId) return true;
+        if (userEmail && pEmail && pEmail === userEmail) return true;
+        return false;
       });
+
+      // If user has no directly matched profile, check active profile key or selection in localStorage
+      if (realProfiles.length === 0) {
+        const storedAccId = typeof window !== 'undefined' ? (localStorage.getItem('lf_selected_account_id') || localStorage.getItem('lf_active_account_id')) : null;
+        if (storedAccId) {
+          const match = data.find(p => p.unipile_account_id === storedAccId && !p.profile_key?.startsWith('user_') && !p.unipile_account_id.includes('@'));
+          if (match) realProfiles.push(match);
+        }
+      }
+
+      // Standalone/Single-tenant fallback: if still empty, use any valid real profile from Supabase
+      if (realProfiles.length === 0) {
+        const validProfiles = data.filter(p => !p.profile_key?.startsWith('user_') && p.unipile_account_id && !p.unipile_account_id.includes('@'));
+        if (validProfiles.length > 0) {
+          realProfiles = validProfiles;
+        }
+      }
 
       // Clear disconnected flag when valid profiles exist
       if (realProfiles.length > 0 && typeof window !== 'undefined' && window.localStorage) {
@@ -207,8 +242,8 @@ export const directGetProfiles = async () => {
         session_active: p.session_active ?? p.settings?.session_active ?? true,
         enabled: p.enabled ?? p.settings?.enabled ?? true,
         daily_sent: p.daily_sent || p.settings?.daily_sent || 0,
-        organization_id: p.organization_id || '00000000-0000-0000-0000-000000000001',
-        user_email: p.user_email || 'superuser@gmail.com',
+        organization_id: p.organization_id,
+        user_email: p.user_email,
       }));
     }
   } catch (e) {
@@ -253,13 +288,13 @@ export const directCreateProfile = async (data) => {
   } catch (e) {}
 
   const userAcc = getActiveUserAccount();
+  const orgId = getActiveOrganizationId();
   const profile_key = data.profile_key || `prof_${Date.now()}`;
   const display_name = data.display_name || 'LinkedIn Profile';
   const unipile_account_id = data.unipile_account_id || null;
   activeAccountId = unipile_account_id;
 
-  const email = userAcc?.email ? userAcc.email.toLowerCase() : 'superuser@gmail.com';
-  const orgId = '00000000-0000-0000-0000-000000000001';
+  const email = userAcc?.email ? userAcc.email.toLowerCase() : null;
 
   try {
     await supabaseDirect.from('profiles').upsert([
@@ -267,12 +302,12 @@ export const directCreateProfile = async (data) => {
         profile_key,
         display_name,
         unipile_account_id,
-        organization_id: orgId,
+        organization_id: orgId || userAcc?.organization_id || null,
         user_email: email,
         session_active: true,
         enabled: true,
         settings: {
-          organization_id: orgId,
+          organization_id: orgId || userAcc?.organization_id || null,
           user_email: email,
           session_active: true,
           enabled: true,
@@ -303,6 +338,11 @@ export const directDisconnectProfile = async (targetId = null) => {
     }
   } catch (e) {}
 
+  const orgId = getActiveOrganizationId();
+  const userAcc = getActiveUserAccount();
+  const userEmail = userAcc?.email ? userAcc.email.toLowerCase() : null;
+  const isSuper = isSuperAdminUser();
+
   try {
     const { data: allProfiles } = await supabaseDirect.from('profiles').select('*');
     if (allProfiles && allProfiles.length > 0) {
@@ -313,7 +353,15 @@ export const directDisconnectProfile = async (targetId = null) => {
         if (targetId) {
           shouldDelete = (p.id === targetId || p.profile_key === targetId || p.unipile_account_id === targetId);
         } else {
-          shouldDelete = true;
+          if (isSuper) {
+            shouldDelete = true;
+          } else {
+            const pOrgId = p.organization_id || p.settings?.organization_id || p.settings?.orgId;
+            const pEmail = (p.user_email || p.settings?.user_email || p.settings?.email || '').toLowerCase();
+            if ((orgId && pOrgId === orgId) || (userEmail && pEmail === userEmail)) {
+              shouldDelete = true;
+            }
+          }
         }
 
         if (shouldDelete) {
@@ -1155,6 +1203,11 @@ export const directBulkImportProspects = async (file, columnMapping = null, impo
             }
           }
 
+          const initMsg = rowData.initial_message || customVars.initial_message || mergedCustomVars.initial_message || existingProspect?.initial_message || '';
+          if (initMsg) {
+            mergedCustomVars.initial_message = initMsg;
+          }
+
           const prospectRow = {
             first_name: firstName || existingProspect?.first_name || 'Lead',
             last_name: lastName || existingProspect?.last_name || '',
@@ -1164,6 +1217,7 @@ export const directBulkImportProspects = async (file, columnMapping = null, impo
             headline: rowData.headline || rowData.job_title || existingProspect?.headline || '',
             email: emailVal || existingProspect?.email || '',
             linkedin_url: cleanUrl || rawUrl || existingProspect?.linkedin_url || '',
+            initial_message: initMsg || existingProspect?.initial_message || '',
             organization_id: effectiveOrgId || existingProspect?.organization_id || null,
             user_email: userEmail || existingProspect?.user_email || null,
             custom_variables: mergedCustomVars,
@@ -1174,6 +1228,13 @@ export const directBulkImportProspects = async (file, columnMapping = null, impo
             status: (existingProspect?.status && existingProspect.status !== 'Not Contacted') ? existingProspect.status : 'Not Contacted',
             updated_at: new Date().toISOString(),
           };
+
+          for (let f = 1; f <= 5; f++) {
+            const fVal = rowData[`followup_${f}`] || rowData[`follow_up_${f}`] || customVars[`followup_${f}`] || customVars[`follow_up_${f}`] || mergedCustomVars[`followup_${f}`] || existingProspect?.[`followup_${f}`];
+            if (fVal) {
+              prospectRow[`followup_${f}`] = fVal;
+            }
+          }
 
           if (existingProspect) {
             // Already in master prospects table -> update record & ensure enrolled in this campaign
@@ -1698,7 +1759,6 @@ export const directSendUnipileChatMessage = async (prospect, text = '') => {
   const recipientId = getLinkedinId(prospect);
   const accountId = await getAccountForProspect(prospect);
   if (!accountId) return { success: false, error: 'NO_CONNECTED_ACCOUNT' };
-
   const messageText = (text || prospect.initial_message || prospect.custom_variables?.initial_message || '').trim();
   if (!messageText) {
     console.error(`[directSendUnipileChatMessage] No message text found for prospect ${prospect.name || prospect.id}`);
@@ -2179,21 +2239,40 @@ export const directRunFlow = async () => {
 
           let resolvedValue = '';
           
-          if (normVar === 'firstname' || normVar === 'first_name') resolvedValue = prospect.first_name || '';
-          else if (normVar === 'lastname' || normVar === 'last_name') resolvedValue = prospect.last_name || '';
-          else if (normVar === 'company') resolvedValue = prospect.company || '';
-          else if (normVar === 'title') resolvedValue = prospect.job_title || '';
-          else {
-            if (prospect[varName] !== undefined) resolvedValue = prospect[varName];
-            else if (prospect.custom_variables) {
-              const matchKey = Object.keys(prospect.custom_variables).find(k => norm(k) === normVar);
-              if (matchKey !== undefined) {
-                resolvedValue = prospect.custom_variables[matchKey];
+          if (normVar === 'firstname' || normVar === 'first_name') {
+            resolvedValue = prospect.first_name || prospect.custom_variables?.first_name || '';
+          } else if (normVar === 'lastname' || normVar === 'last_name') {
+            resolvedValue = prospect.last_name || prospect.custom_variables?.last_name || '';
+          } else if (normVar === 'company') {
+            resolvedValue = prospect.company || prospect.custom_variables?.company || '';
+          } else if (normVar === 'title' || normVar === 'jobtitle') {
+            resolvedValue = prospect.job_title || prospect.custom_variables?.job_title || prospect.custom_variables?.title || '';
+          } else {
+            // 1. Check top-level prospect property if non-empty
+            if (prospect[varName] !== undefined && prospect[varName] !== null && String(prospect[varName]).trim() !== '') {
+              resolvedValue = prospect[varName];
+            }
+            // 2. Check custom_variables with exact key or normalized key
+            if (!resolvedValue && prospect.custom_variables) {
+              if (prospect.custom_variables[varName] !== undefined && prospect.custom_variables[varName] !== null && String(prospect.custom_variables[varName]).trim() !== '') {
+                resolvedValue = prospect.custom_variables[varName];
+              } else {
+                const matchKey = Object.keys(prospect.custom_variables).find(k => norm(k) === normVar);
+                if (matchKey !== undefined && prospect.custom_variables[matchKey] !== undefined && prospect.custom_variables[matchKey] !== null) {
+                  resolvedValue = prospect.custom_variables[matchKey];
+                }
+              }
+            }
+            // 3. Fallback: check top-level prospect with normalized key
+            if (!resolvedValue) {
+              const topMatchKey = Object.keys(prospect).find(k => norm(k) === normVar);
+              if (topMatchKey && prospect[topMatchKey] !== undefined && prospect[topMatchKey] !== null && String(prospect[topMatchKey]).trim() !== '') {
+                resolvedValue = prospect[topMatchKey];
               }
             }
           }
           
-          text = text.replace(m, resolvedValue !== undefined ? String(resolvedValue) : '');
+          text = text.replace(m, resolvedValue !== undefined && resolvedValue !== null ? String(resolvedValue) : '');
         }
         
         return text;
