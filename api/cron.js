@@ -211,7 +211,11 @@ export default async function handler(req, res) {
 
         // 2. Check Delay
         if (nodeType === 'wait') {
-          const days = Number(nodeConfig.days || 0);
+          let days = Number(nodeConfig.days || 0);
+          if (days === 0) {
+            const m = String(currentNode?.data?.label || '').match(/(\d+)\s*days?/i);
+            if (m) days = Number(m[1]);
+          }
           const nextSched = cv.next_scheduled_at;
           const nowMs = Date.now();
 
