@@ -1041,6 +1041,42 @@ export const directGetProspects = async (params = {}) => {
   return { prospects: [], total: 0 };
 };
 
+const VALID_PROSPECT_COLUMNS = new Set([
+  'id', 'name', 'first_name', 'last_name', 'company', 'job_title',
+  'email', 'linkedin_url', 'location', 'public_identifier', 'provider_id',
+  'member_id', 'status', 'connection_status', 'connection_sent_date',
+  'message_sent_date', 'accepted_at', 'list_id', 'campaign_id',
+  'organization_id', 'user_email', 'custom_variables', 'created_at', 'updated_at'
+]);
+
+function sanitizeProspectPayload(data, existingCustomVars = {}) {
+  const customVars = {
+    ...existingCustomVars,
+    ...(data.custom_variables || {}),
+  };
+
+  const payload = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (VALID_PROSPECT_COLUMNS.has(key)) {
+      payload[key] = value;
+    } else {
+      if (value !== undefined && value !== null) {
+        customVars[key] = value;
+      }
+    }
+  }
+
+  if (data.title && !payload.job_title) payload.job_title = data.title;
+  if (data.headline && !payload.job_title) payload.job_title = data.headline;
+  if (!payload.name) {
+    payload.name = `${payload.first_name || ''} ${payload.last_name || ''}`.trim() || 'Prospect';
+  }
+
+  payload.custom_variables = customVars;
+  payload.updated_at = new Date().toISOString();
+  return payload;
+}
+
 export const directCreateProspect = async (data) => {
   const firstName = (data.first_name || data.name?.split(' ')[0] || '').trim()
     || (data.linkedin_url ? (data.linkedin_url.split('/in/')[1] || '').split('/')[0].replace(/[-_]/g, ' ') : '')
@@ -1049,38 +1085,24 @@ export const directCreateProspect = async (data) => {
   const userAcc = getActiveUserAccount();
   const orgId = getActiveOrganizationId();
   const email = userAcc?.email ? userAcc.email.toLowerCase() : null;
-  const customVars = {
-    ...(data.custom_variables || {}),
-    organization_id: orgId || userAcc?.organization_id || null,
-    user_email: email,
-  };
-  if (data.location) customVars.location = data.location;
 
-  const payload = {
+  const sanitized = sanitizeProspectPayload({
+    ...data,
     first_name: firstName,
-    last_name: (data.last_name || data.name?.split(' ').slice(1).join(' ') || '').trim(),
-    name: data.name || `${firstName} ${data.last_name || ''}`.trim(),
-    company: data.company || '',
-    job_title: data.job_title || data.title || '',
-    headline: data.headline || data.job_title || data.title || '',
-    email: data.email || '',
-    linkedin_url: data.linkedin_url || '',
     status: data.status || 'Not Contacted',
-    campaign_id: data.campaign_id || null,
-    list_id: data.list_id || null,
     organization_id: orgId || userAcc?.organization_id || null,
     user_email: email,
-    custom_variables: customVars,
     created_at: new Date().toISOString(),
-  };
+  });
+
   try {
-    const { data: res, error } = await supabaseDirect.from('prospects').insert([payload]).select();
+    const { data: res, error } = await supabaseDirect.from('prospects').insert([sanitized]).select();
     if (error) console.error('directCreateProspect error:', error);
     if (!error && res && res[0]) return res[0];
   } catch (e) {
     console.warn('directCreateProspect warning:', e);
   }
-  return { id: crypto.randomUUID(), ...payload };
+  return { id: crypto.randomUUID(), ...sanitized };
 };
 
 export const directGetProspect = async (id) => {
@@ -1099,9 +1121,12 @@ export const directGetProspect = async (id) => {
 };
 
 export const directUpdateProspect = async (id, updates) => {
+  const sanitized = sanitizeProspectPayload(updates);
+  delete sanitized.id;
   try {
-    const { data, error } = await supabaseDirect.from('prospects').update(updates).eq('id', id).select();
+    const { data, error } = await supabaseDirect.from('prospects').update(sanitized).eq('id', id).select();
     if (!error && data && data[0]) return data[0];
+    if (error) console.error('directUpdateProspect error:', error);
   } catch (e) {
     console.warn('directUpdateProspect warning:', e);
   }
