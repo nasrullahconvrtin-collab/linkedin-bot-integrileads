@@ -1464,9 +1464,19 @@ function cleanLinkedinUrl(url) {
 }
 
 function parseCSVText(csvText) {
+  if (!csvText || typeof csvText !== 'string') return [];
   const lines = [];
   let row = [""];
   let inQuotes = false;
+
+  // Auto-detect delimiter: check first line for comma vs semicolon vs tab
+  const firstLine = csvText.split(/\r\n|\n|\r/)[0] || '';
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semiCount = (firstLine.match(/;/g) || []).length;
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+  let delimiter = ',';
+  if (semiCount > commaCount && semiCount >= tabCount) delimiter = ';';
+  else if (tabCount > commaCount && tabCount > semiCount) delimiter = '\t';
 
   for (let i = 0; i < csvText.length; i++) {
     const char = csvText[i];
@@ -1479,7 +1489,7 @@ function parseCSVText(csvText) {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === delimiter && !inQuotes) {
       row.push("");
     } else if ((char === '\r' || char === '\n') && !inQuotes) {
       if (char === '\r' && nextChar === '\n') i++;
@@ -1500,7 +1510,7 @@ function autoGuessHeader(header) {
   if (clean.includes('first_name') || clean.includes('firstname') || clean === 'first') return 'first_name';
   if (clean.includes('last_name') || clean.includes('lastname') || clean === 'last') return 'last_name';
   if (clean === 'name' || clean === 'full_name' || clean === 'fullname') return 'name';
-  if (clean.includes('linkedin') || clean.includes('profile_url') || clean === 'url') return 'linkedin_url';
+  if (clean.includes('linkedin') || clean.includes('profile_url') || clean.includes('profile_link') || clean.includes('profile') || clean.includes('link') || clean === 'url' || clean.includes('person_url')) return 'linkedin_url';
   if (clean.includes('email')) return 'email';
   if (clean.includes('company') || clean.includes('organization')) return 'company';
   if (clean.includes('job') || clean.includes('title')) return 'job_title';
@@ -1571,21 +1581,23 @@ export const validateCSVHeaders = (headers = []) => {
   const cleanHeaders = headers.map(h => (h || '').trim());
   const cleanNorm = cleanHeaders.map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
 
-  // Check required linkedin_url
-  const hasLinkedinUrl = cleanNorm.some(h => h.includes('linkedin') || h.includes('profileurl') || h === 'url');
-  if (!hasLinkedinUrl) {
-    return {
-      valid: false,
-      error: 'Missing required "linkedin_url" column. Every prospect must have a LinkedIn profile URL so the tool can identify them.'
-    };
-  }
+  // Broad check for LinkedIn profile URL column
+  const hasLinkedinUrl = cleanNorm.some(h => 
+    h.includes('linkedin') || 
+    h.includes('profileurl') || 
+    h.includes('profilelink') || 
+    h.includes('profile') || 
+    h.includes('link') || 
+    h === 'url' ||
+    h.includes('contacturl') ||
+    h.includes('social')
+  );
 
   const STANDARD_KEYS = new Set([
     'linkedinurl', 'firstname', 'lastname', 'name', 'company', 'jobtitle', 'title',
     'headline', 'location', 'city', 'state', 'country', 'email', 'notes', 'invitenote',
     'initialmessage', 'initial', 'followup1', 'followup2', 'followup3', 'followup4', 'followup5',
-    'followup1', 'followup2', 'followup3', 'followup4', 'followup5',
-    'inmailsubject', 'inmailmessage'
+    'inmailsubject', 'inmailmessage', 'profile', 'profileurl', 'profilelink', 'link', 'url', 'linkedin'
   ]);
 
   const standardFields = [];
@@ -1604,7 +1616,7 @@ export const validateCSVHeaders = (headers = []) => {
 
   return {
     valid: true,
-    hasLinkedinUrl: true,
+    hasLinkedinUrl,
     standardFields,
     customVariables,
     totalHeaders: cleanHeaders.length
