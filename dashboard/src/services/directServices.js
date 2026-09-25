@@ -2577,8 +2577,7 @@ export const directRunFlow = async () => {
 
         if (!isConnected) {
           const pSlug = extractLinkedInSlug(prospect.linkedin_url) || extractLinkedInSlug(prospect.public_identifier);
-          const pName = (prospect.name || `${prospect.first_name || ''} ${prospect.last_name || ''}`).toLowerCase().trim();
-          matchedRel = (pSlug && relSlugs.get(pSlug)) || (prospect.member_id && relMemberIds.get(prospect.member_id)) || (pName && relNames.get(pName));
+          matchedRel = (pSlug && relSlugs.get(pSlug)) || (prospect.member_id && relMemberIds.get(prospect.member_id));
           if (matchedRel) {
             isConnected = true;
           }
@@ -3039,8 +3038,7 @@ export const directCheckAcceptances = async () => {
 
       for (const p of prospects) {
         const pSlug = extractLinkedInSlug(p.linkedin_url) || extractLinkedInSlug(p.public_identifier);
-        const pName = (p.name || `${p.first_name || ''} ${p.last_name || ''}`).toLowerCase().trim();
-        const rel = (pSlug && relSlugs.get(pSlug)) || (p.member_id && relMemberIds.get(p.member_id)) || (pName && relNames.get(pName));
+        const rel = (pSlug && relSlugs.get(pSlug)) || (p.member_id && relMemberIds.get(p.member_id));
 
         if (rel) {
           const acceptedAt = rel.created_at ? new Date(rel.created_at).toISOString() : new Date().toISOString();
