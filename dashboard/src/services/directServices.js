@@ -2779,7 +2779,6 @@ export const directRunFlow = async () => {
             continue;
           }
           // PRE-SEND CLAIM: Lock node in DB before typing delay starts so concurrent processes immediately skip this prospect
-          prospect.custom_variables.last_sent_node_id = currentNode.id;
           prospect.custom_variables.send_in_progress_at = new Date().toISOString();
           try {
             await supabaseDirect.from('prospects').update({
@@ -2794,6 +2793,7 @@ export const directRunFlow = async () => {
 
           if (res.duplicateBlocked) {
             console.warn(`[Runner] Duplicate message blocked for ${prospect.name}. Skipping without advancing node.`);
+            delete prospect.custom_variables.send_in_progress_at;
             continue;
           }
 
@@ -2803,6 +2803,7 @@ export const directRunFlow = async () => {
             const isFollowUp = (nodeLabel || '').toLowerCase().includes('follow') || (nodeConfig.message || '').toLowerCase().includes('follow');
             prospect.status = isFollowUp ? 'Following Up' : 'Initial Message Sent';
             prospect.custom_variables.last_sent_node_id = currentNode.id;
+            delete prospect.custom_variables.send_in_progress_at;
             prospect.custom_variables.message_sent_at = new Date().toISOString();
             prospect.custom_variables.last_action_at = new Date().toISOString();
             prospect.custom_variables.history = [
@@ -2820,12 +2821,36 @@ export const directRunFlow = async () => {
             }
           } else {
             console.warn(`Failed to send message: ${res.error}`);
+            delete prospect.custom_variables.last_sent_node_id;
+            delete prospect.custom_variables.send_in_progress_at;
+
+            const errStr = String(res.error || '');
+            const isNotConnected = errStr.toLowerCase().includes('not to be first degree') || errStr.toLowerCase().includes('not a first degree');
+
+            if (isNotConnected) {
+              console.warn(`[Runner] ${prospect.name} is NOT a 1st degree connection. Reverting status to wait for acceptance.`);
+              const hasSentInvite = prospect.connection_sent_date || prospect.custom_variables.invitation_sent_at;
+              if (hasSentInvite) {
+                prospect.status = 'Connection Request Sent';
+                prospect.connection_status = 'invitation_sent';
+                const invNode = Array.from(nodesMap.values()).find(n => (n.data?.nodeType === 'send_invitation' || n.data?.action_type === 'send_invitation'));
+                if (invNode) {
+                  prospect.custom_variables.current_node_id = invNode.id;
+                }
+              } else {
+                prospect.status = 'Needs Review';
+                prospect.connection_status = 'not_connected';
+              }
+            }
+
             prospect.custom_variables.history = [
               ...(prospect.custom_variables.history || []),
               { node_id: currentNode.id, node_type: 'send_message', executed_at: new Date().toISOString(), status: 'failed', error: res.error }
             ];
             try {
               await supabaseDirect.from('prospects').update({
+                status: prospect.status,
+                connection_status: prospect.connection_status,
                 custom_variables: prospect.custom_variables
               }).eq('id', prospect.id);
             } catch (e) {
